@@ -1,6 +1,6 @@
-#!/usr/local/Cellar/python/2.7.12_2/bin/python
+#!/usr/bin/python
 from __future__ import print_function, unicode_literals
-import argparse, multiprocessing, os, json, getpass, paramiko, math, Queue, time, subprocess, threading, logging, io
+import argparse, multiprocessing, os, json, paramiko, math, Queue, time, subprocess, threading
 
 data = {}
 
@@ -10,21 +10,24 @@ def main():
 
 	subparser = parser.add_subparsers(dest="mode", title="modes", description="", help="all the different actions that can be taken")
 
-	add_new_args(subparser)
-	add_add_args(subparser)
-	add_list_args(subparser)
-	add_remove_args(subparser)
-	add_update_args(subparser)
-	add_run_args(subparser)
+	new_args(subparser)
+	add_remote_args(subparser)
+	add_file_args(subparser)
+	list_args(subparser)
+	remove_args(subparser)
+	update_args(subparser)
+	run_args(subparser)
 
 	args = parser.parse_args()
 
 	if args.mode == "new":
 		new_project(args)
-	elif args.mode == "add":
+	elif args.mode == "add-remote":
 		add_remote(args)
+	elif args.mode == "add-file":
+		add_file(args)
 	elif args.mode == "list":
-		list_remote(args)
+		list_remotes(args)
 	elif args.mode == "remove":
 		remove_remote(args)
 	elif args.mode == "update":
@@ -40,7 +43,9 @@ def new_project(args):
 	file, function = args.target.split(".")
 	data["function"] = function.replace("()", "")
 	data["file"] = file
+	data["files"] = []
 	data["remotes"] = []
+	data["local"] = args.local
 	close_project()
 
 def add_remote(args):
@@ -59,17 +64,20 @@ def add_remote(args):
 		if remote["name"] == server["name"]:
 			print("[Error] Server with that name already exists in this project.")
 			sys.exit()
-
-	pswd = getpass.getpass("Password for " + args.user + "@" + args.location+ ": ")
-	remote["password"] = pswd 		# this is bad, passwords should not be stored in plain text
 	
 	data["remotes"].append(remote)
 	data["remotes"].sort(key=lambda x:x["name"])
 	if args.upload:
-		upload_to(remote)
+		_upload_to(remote)
 	close_project()
 
-def list_remote(args):
+def add_file(args):
+	open_project()
+	for name in args.file:
+		data["files"].append(name)
+	close_project()
+
+def list_remotes(args):
 	open_project()
 	for server in data["remotes"]:
 		if server["name"] == server["location"]:
@@ -85,7 +93,7 @@ def update_remote(args):
 	# TODO: upload in parallel
 	open_project()
 	for server in data["remotes"]:
-		upload_to(server)
+		_upload_to(server)
 
 def run(args):
 	open_project()
@@ -157,37 +165,24 @@ def _create_blocks(args):
 
 	return blocks, block_id + 1
 
-def upload_to(remote):
-	with paramiko.SSHClient() as client:
-		client.load_system_host_keys()
-		client.set_missing_host_key_policy(paramiko.client.AutoAddPolicy())
+def _upload_to(remote):
+	program_name = data["file"] + ".py"
+	_upload_file(program_name, remote)
+	for filename in data["files"]:
+		_upload_file(filename, remote)
 
-		program_name = data[str("file")] + ".py"
+	if data["local"]:
+		_upload_file("controller.py", remote)
+	else:
+		_upload_file("~/.cerberus/controller.py", remote)
 
-		print("connecting to "+ remote["user"]+ "@" + remote["location"])
-		client.connect(str(remote["location"]), username=str(remote["user"]))
-		# TODO: handle errors nicely
-		sftp = client.open_sftp()
-		if ".cerberus" not in sftp.listdir("."):
-			sftp.mkdir(".cerberus")
-		sftp.chdir(".cerberus")
-		if data["name"] not in sftp.listdir("."):
-			sftp.mkdir(data["name"])
-		sftp.chdir(data["name"])
-
-
-		if program_name in sftp.listdir("."):
-			sftp.remove(program_name)
-		sftp.put(program_name, program_name)
-
-		if os.path.isdir("data"):
-			rsync_args = ["rsync", "-rc", "data", remote["user"] + "@" + str(remote["location"]) + ":~/.cerberus/" + data["name"]]
-			print("Found data folder.  Uploading...  ", end="")
-			subprocess.call(rsync_args)
-			print(" ...Done")
-
-		if "controller.py" not in sftp.listdir("."):
-			sftp.put("controller.py", "controller.py")
+def _upload_file(file, remote):
+	rsync_args = ["rsync", "-rc",
+		os.path.abspath(os.path.expanduser(file)),
+		remote["user"] + "@" + str(remote["location"]) + ":~/.cerberus/" + data["name"] + "/"]
+	print("Uploading " + file + " ", end="")
+	subprocess.call(rsync_args)
+	print(" ...Done")		# TODO: detect errors cleanly
 
 def open_project():
 	if not os.path.isfile("cerberus.confg"):
@@ -200,31 +195,35 @@ def open_project():
 def close_project():
 	json.dump(data, open("cerberus.confg", "w"))
 
-def add_new_args(subparser):
+def new_args(subparser):
 	new_parser = subparser.add_parser("new", help="Creates a new cerberus project in the current directory")
 	new_parser.add_argument("name", help="The name for the new cerberus project")
 	new_parser.add_argument("target", help="The function that is to be run to the network.  eg. myfile.main ")
+	new_parser.add_argument("--use-local-controller", dest="local", action="store_true", help="Use a controller.py found in the directory of this project.  Otherwise it uses the one at ~/.Cerberus/controller.py")
 
-def add_add_args(subparser):
-	parser = subparser.add_parser("add", help="Adds another remote server to the collection for the current project")
+def add_remote_args(subparser):
+	parser = subparser.add_parser("add-remote", help="Adds another remote server to the collection for the current project.  Note: this server must be setup to use keys and not a password to connect via ssh.")
 	parser.add_argument("-a", "--alias", help="The alias (nickname) for the remote server")
 	parser.add_argument("location", help="Address or ip of the remote server")
 	parser.add_argument("user", help="Username to use on the remote server")
-	parser.add_argument("-c", "--cores", type=int, help="Specifies how many threads to run.  Defaults to the number of cpu cores.")
+	parser.add_argument("-c", "--cores", type=int, default=0, help="Specifies how many threads to run.  Defaults to the number of cpu cores.")
 	parser.add_argument("-u", "--upload", action="store_true", help="Upload files to server immediately")
-	# parser.add_argument("-k", "--use-key", action="store_true", help="Use an ssh key instead of a password.  The key must be in users known hosts file")
 
-def add_list_args(subparser):
+def add_file_args(subparser):
+	parser = subparser.add_parser("add-file", help="Adds files to the project")
+	parser.add_argument("file", nargs="+", help="file(s) to be added to the project")
+
+def list_args(subparser):
 	parser = subparser.add_parser("list", help="Lists all known remote servers for this project")
 
-def add_remove_args(subparser):
+def remove_args(subparser):
 	parser = subparser.add_parser("remove", help="Removes a remote server from the project")
 	parser.add_argument("name", help="The address or alias of the server to be removed")
 
-def add_update_args(subparser):
+def update_args(subparser):
 	parser = subparser.add_parser("update", help="Deplpys code and data files to all remote servers for this project")
 
-def add_run_args(subparser):
+def run_args(subparser):
 	parser = subparser.add_parser("run", help="Runs the project")
 
 	parser.add_argument("-s", "--start", action="store", default=0, type=int, help="Specifies the value to start incrementing from.  Defaults to 0 (inclusive)")
@@ -247,8 +246,6 @@ class remoteRunner(multiprocessing.Process):
 		self.name = name
 		self.module_name = module_name
 		self.function = function
-		self.rem_out = None
-		self.rem_in = None
 
 	def run(self):
 		args = ["python", ".cerberus/" + self.name + "/controller.py", str(self.server["cores"]), self.module_name, self.function]
@@ -259,13 +256,9 @@ class remoteRunner(multiprocessing.Process):
 				self.client = c
 				self.client.load_system_host_keys()
 				self.client.set_missing_host_key_policy(paramiko.client.AutoAddPolicy())
-				self.client.connect(str(self.server["location"]), username=str(self.server["user"]), password=str(self.server["password"]))
+				self.client.connect(str(self.server["location"]), username=str(self.server["user"]))
 				print("connected to " + self.server["name"])
-				print(cmd)
-				rem_in, rem_out, rem_err = self.client.exec_command(cmd)
-				self.rem_out = rem_out
-				self.rem_in = rem_in
-				print("executed")	
+				rem_in, rem_out, rem_err = self.client.exec_command(cmd)	
 				
 				try:
 					while not self.end.is_set():
@@ -288,7 +281,7 @@ class remoteRunner(multiprocessing.Process):
 				except Queue.Empty:
 					pass
 			finally:
-				print("end", file=self.rem_in)
+				print("end", file=rem_in)
 
 class localRunner(multiprocessing.Process):
 	def __init__(self, queue, results, module_name, function, end_event):

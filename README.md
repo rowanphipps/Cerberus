@@ -1,5 +1,4 @@
 #Cerberus#
-======
 
 Cerberus is a tool to allow python programs to be run on both the host and remote machines to increase performance.  In order for a function to be deployed with Cerberus it must take a single integer as a parameter and return its result in a form that is serializable via json.
 
@@ -13,11 +12,11 @@ Currently it has the following dependencies:
 - [Paramiko](http://www.paramiko.org/)
 
 ## Installation
-`Cerberus.py` should be placed somewhere on your path and can be renamed to `Cerberus` without the `.py` on the end.  `controller.py` should be placed in `~/.cerberus/`
+`Cerberus.py` should be placed somewhere on your path and can be renamed to `cerberus` without the `.py` on the end.  `controller.py` should be placed in `~/.cerberus/`
 
 ##Usage
 
-To use Cerberus you will first need to write a function like the one described above that takes a single int as input and returns its result as something compatible with json.  It can rely on data and or code in other files but these will need to be added to the Cerberus project explicitly.  In addition you need to make sure that any libraries the code depends on are preinstalled on all the machines the code is to be run on.
+To use Cerberus you will first need to write a function like the one described above that takes a single int as input and returns its result as something compatible with json.  It can rely on data and or code in other files but these will need to be added to the Cerberus project explicitly with `cerberus add-file file [file ...]`.  In addition you need to make sure that any libraries the code depends on are preinstalled on all the machines the code is to be run on.
 
 ### Setup
 Once you have a function that you want to run using Cerberus, you will need to create a new Cerberus project by running `cerberus new` with the name for the project and the function you want to run as arguments. eg.
@@ -26,7 +25,7 @@ cerberus new test_project my_file.some_function
 ```
 In the above example `some_function` would be a function found in `my_file.py` that would take a single int as a parameter and return the results of its calculation.  Running this command would generate a file called `cerberus.confg` that contains information about the Cerberus project.  At this point it is possible to use Cerberus to run the function locally utilizing all of its CPU cores but first we probably want to add some remote servers for more compute resources.
 
-Servers can be add to the project by running `cerberus add` followed by the address of the server and the username of the user on the server that is to be used.  The current user on the host machine must be setup to login via ssh using keys otherwise Cerberus is unable to use the server.  More options can be found using `cerberus add -h`.  Once servers have been added to the project they can be listed out by running `cerberus list`
+Servers can be add to the project by running `cerberus add-remote` followed by the address of the server and the username of the user on the server that is to be used.  The current user on the host machine must be setup to login via ssh using keys otherwise Cerberus is unable to use the server.  More options can be found using `cerberus add -h`.  Once servers have been added to the project they can be listed out by running `cerberus list`
 
 ### Running Code
 
