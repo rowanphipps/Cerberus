@@ -1,6 +1,6 @@
 #!/usr/local/Cellar/python/2.7.12_2/bin/python
 from __future__ import print_function, unicode_literals
-import argparse, multiprocessing, os, json, getpass, paramiko, math, Queue, time, subprocess, threading, logging
+import argparse, multiprocessing, os, json, getpass, paramiko, math, Queue, time, subprocess, threading, logging, io
 
 data = {}
 
@@ -8,7 +8,7 @@ def main():
 	paramiko.util.log_to_file("paramiko.log")
 	parser = argparse.ArgumentParser(prog="cerberus")
 
-	subparser = parser.add_subparsers(dest="mode", title="modes")
+	subparser = parser.add_subparsers(dest="mode", title="modes", description="", help="all the different actions that can be taken")
 
 	add_new_args(subparser)
 	add_add_args(subparser)
@@ -164,11 +164,8 @@ def upload_to(remote):
 
 		program_name = data[str("file")] + ".py"
 
-		if remote["password"] == None:
-			
-			client.connect(str(remote["location"]), username=str(remote["user"]))
-		print("connecting to "+ remote["user"]+ "@" + remote["location"] + " with a password")
-		client.connect(str(remote["location"]), password=str(remote["password"]), username=str(remote["user"]), look_for_keys=False)
+		print("connecting to "+ remote["user"]+ "@" + remote["location"])
+		client.connect(str(remote["location"]), username=str(remote["user"]))
 		# TODO: handle errors nicely
 		sftp = client.open_sftp()
 		if ".cerberus" not in sftp.listdir("."):
@@ -178,19 +175,19 @@ def upload_to(remote):
 			sftp.mkdir(data["name"])
 		sftp.chdir(data["name"])
 
+
 		if program_name in sftp.listdir("."):
 			sftp.remove(program_name)
 		sftp.put(program_name, program_name)
 
 		if os.path.isdir("data"):
-			# call rsync on data
+			rsync_args = ["rsync", "-rc", "data", remote["user"] + "@" + str(remote["location"]) + ":~/.cerberus/" + data["name"]]
 			print("Found data folder.  Uploading...  ", end="")
-			subprocess.call(["rsync", "-rc", "data", remote["user"] + "@" + str(remote["location"]) + ":~/.cerberus/" + data["name"]])
+			subprocess.call(rsync_args)
 			print(" ...Done")
 
 		if "controller.py" not in sftp.listdir("."):
 			sftp.put("controller.py", "controller.py")
-		print(sftp.listdir())
 
 def open_project():
 	if not os.path.isfile("cerberus.confg"):
