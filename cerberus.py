@@ -1,6 +1,6 @@
 #!/usr/bin/python
 from __future__ import print_function, unicode_literals
-import argparse, multiprocessing, os, json, paramiko, math, Queue, time, subprocess, threading
+import argparse, multiprocessing, os, json, paramiko, math, Queue, time, subprocess, threading, io
 
 data = {}
 
@@ -14,7 +14,8 @@ def main():
 	add_remote_args(subparser)
 	add_file_args(subparser)
 	list_args(subparser)
-	remove_args(subparser)
+	remove_remote_args(subparser)
+	remove_file_args(subparser)
 	update_args(subparser)
 	run_args(subparser)
 
@@ -22,14 +23,16 @@ def main():
 
 	if args.mode == "new":
 		new_project(args)
-	elif args.mode == "add-remote":
+	elif args.mode == "add-server":
 		add_remote(args)
 	elif args.mode == "add-file":
 		add_file(args)
 	elif args.mode == "list":
-		list_remotes(args)
-	elif args.mode == "remove":
+		list_data(args)
+	elif args.mode == "remove-server":
 		remove_remote(args)
+	elif args.mode == "remove-file":
+		remove_files(args)
 	elif args.mode == "update":
 		update_remote(args)
 	elif args.mode == "run":
@@ -77,17 +80,36 @@ def add_file(args):
 		data["files"].append(name)
 	close_project()
 
-def list_remotes(args):
+def list_data(args):
 	open_project()
+	print("Servers:")
 	for server in data["remotes"]:
 		if server["name"] == server["location"]:
 			print(server["user"] + "@" + server["location"])
 		else:
 			print(server["user"] + "@" + server["name"] + " (" + server["location"] +")")
 
+	print("Included files and directories:")
+	print("\n".join(data["files"]))
+
 def remove_remote(args):
-	# TODO: implement this function
-	raise NotImplementedError()
+	open_project()
+	for i in range(len(data["remotes"]) - 1, -1, -1):
+		remote = data["remotes"][i]
+		if remote["name"] == args.name:
+			_remove_server(remote)
+			data["remotes"].pop(i)
+
+	close_project()
+
+def remove_files(args):
+	open_project()
+	for fname in args.file:
+		if fname in data["files"]:
+			data["files"].remove(fname)
+		else:
+			print("File not found in project: " + fname)
+	close_project()
 
 def update_remote(args):
 	# TODO: upload in parallel
@@ -165,7 +187,22 @@ def _create_blocks(args):
 
 	return blocks, block_id + 1
 
+def _remove_server(server):
+	ssh_string = server["user"] + "@" + str(server["location"])
+	rm_args = ["ssh", ssh_string, "rm", "-rf", ".cerberus/" + data["name"]]
+	print("Deleting files from  " + ssh_string + " ", end="")
+	proc = subprocess.Popen(rm_args, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+	proc.wait()
+	if proc.returncode != 0:
+		print("Error")
+		print(proc.sterr.readline().strip())
+	else:
+		print(" ...Done")
+
 def _upload_to(remote):
+	_ensure_dir(".cerberus", remote)
+	_ensure_dir(".cerberus/" + data["name"], remote)
+
 	program_name = data["file"] + ".py"
 	_upload_file(program_name, remote)
 	for filename in data["files"]:
@@ -178,11 +215,24 @@ def _upload_to(remote):
 
 def _upload_file(file, remote):
 	rsync_args = ["rsync", "-rc",
-		os.path.abspath(os.path.expanduser(file)),
+		os.path.expanduser(file),
 		remote["user"] + "@" + str(remote["location"]) + ":~/.cerberus/" + data["name"] + "/"]
 	print("Uploading " + file + " ", end="")
-	subprocess.call(rsync_args)
-	print(" ...Done")		# TODO: detect errors cleanly
+	proc = subprocess.Popen(rsync_args, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+	proc.wait()
+	if proc.returncode != 0:
+		print("Error")
+		print(proc.sterr.readline().strip())
+	else:
+		print(" ...Done")
+
+def _ensure_dir(name, remote):
+	ssh_args = ["ssh", remote["user"] + "@" + str(remote["location"]), "mkdir", name]
+	proc = subprocess.Popen(ssh_args, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+	proc.wait()
+	err = proc.stderr.readline().strip()
+	if not err.endswith("File exists"):
+		print(err)
 
 def open_project():
 	if not os.path.isfile("cerberus.confg"):
@@ -202,7 +252,7 @@ def new_args(subparser):
 	new_parser.add_argument("--use-local-controller", dest="local", action="store_true", help="Use a controller.py found in the directory of this project.  Otherwise it uses the one at ~/.Cerberus/controller.py")
 
 def add_remote_args(subparser):
-	parser = subparser.add_parser("add-remote", help="Adds another remote server to the collection for the current project.  Note: this server must be setup to use keys and not a password to connect via ssh.")
+	parser = subparser.add_parser("add-server", help="Adds another remote server to the collection for the current project.  Note: this server must be setup to use keys and not a password to connect via ssh.")
 	parser.add_argument("-a", "--alias", help="The alias (nickname) for the remote server")
 	parser.add_argument("location", help="Address or ip of the remote server")
 	parser.add_argument("user", help="Username to use on the remote server")
@@ -216,12 +266,17 @@ def add_file_args(subparser):
 def list_args(subparser):
 	parser = subparser.add_parser("list", help="Lists all known remote servers for this project")
 
-def remove_args(subparser):
-	parser = subparser.add_parser("remove", help="Removes a remote server from the project")
+def remove_remote_args(subparser):
+	parser = subparser.add_parser("remove-server", help="Removes a remote server from the project and deletes this projects files from the server.  If there are duplicate entries with the same name both will be removed.")
 	parser.add_argument("name", help="The address or alias of the server to be removed")
 
+def remove_file_args(subparser):
+	parser = subparser.add_parser("remove-file", help="Removes a file from the project.  This will not delete any files from the remote servers.")
+	parser.add_argument("file", nargs="+", help="The name of the file to be removed")
+
+
 def update_args(subparser):
-	parser = subparser.add_parser("update", help="Deplpys code and data files to all remote servers for this project")
+	parser = subparser.add_parser("update", help="Deploys code and data files to all remote servers for this project")
 
 def run_args(subparser):
 	parser = subparser.add_parser("run", help="Runs the project")
