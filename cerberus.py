@@ -1,6 +1,6 @@
 #!/usr/bin/python
 from __future__ import print_function, unicode_literals
-import argparse, multiprocessing, os, json, paramiko, math, Queue, time, subprocess, threading, io
+import argparse, multiprocessing, os, json, paramiko, math, Queue, time, subprocess, threading, sys
 
 data = {}
 
@@ -8,7 +8,10 @@ def main():
 	paramiko.util.log_to_file("paramiko.log")
 	parser = argparse.ArgumentParser(prog="cerberus")
 
-	subparser = parser.add_subparsers(dest="mode", title="modes", description="", help="all the different actions that can be taken")
+	subparser = parser.add_subparsers(
+		dest="mode",
+		title="modes",
+		description="Cerberus has a number of different subcommands that each do different things.  For detailed help type `cerberus command -h`")
 
 	new_args(subparser)
 	add_remote_args(subparser)
@@ -20,28 +23,11 @@ def main():
 	run_args(subparser)
 
 	args = parser.parse_args()
-
-	if args.mode == "new":
-		new_project(args)
-	elif args.mode == "add-server":
-		add_remote(args)
-	elif args.mode == "add-file":
-		add_file(args)
-	elif args.mode == "list":
-		list_data(args)
-	elif args.mode == "remove-server":
-		remove_remote(args)
-	elif args.mode == "remove-file":
-		remove_files(args)
-	elif args.mode == "update":
-		update_remote(args)
-	elif args.mode == "run":
-		run(args)
+	args.func(args)
 
 def new_project(args):
 	if os.path.isfile("cerberus.conf"):
-		print("[Error] Existing project already found") 
-		sys.exit() # TODO exit with an accurate code
+		sys.exit("Existing project already found") 
 	data["name"] = args.name
 	file, function = args.target.split(".")
 	data["function"] = function.replace("()", "")
@@ -62,11 +48,9 @@ def add_remote(args):
 
 	for server in data["remotes"]:
 		if remote["location"] == server["location"]:
-			print("[Error] Server already exists in this project.")
-			sys.exit()
+			sys.exit("Server already exists in this project.")
 		if remote["name"] == server["name"]:
-			print("[Error] Server with that name already exists in this project.")
-			sys.exit()
+			sys.exit("Server with that name already exists in this project.")
 	
 	data["remotes"].append(remote)
 	data["remotes"].sort(key=lambda x:x["name"])
@@ -82,14 +66,18 @@ def add_file(args):
 
 def list_data(args):
 	open_project()
-	print("Servers:")
-	for server in data["remotes"]:
-		if server["name"] == server["location"]:
-			print(server["user"] + "@" + server["location"])
-		else:
-			print(server["user"] + "@" + server["name"] + " (" + server["location"] +")")
+	if len(data["remotes"]) > 0:
+		print("Servers:")
+		for server in data["remotes"]:
+			if server["name"] == server["location"]:
+				print(server["user"] + "@" + server["location"])
+			else:
+				print(server["user"] + "@" + server["name"] + " (" + server["location"] +")")
+	else:
+		print("No servers added")
 
 	print("Included files and directories:")
+	print(data["file"] + ".py")
 	print("\n".join(data["files"]))
 
 def remove_remote(args):
@@ -120,11 +108,8 @@ def update_remote(args):
 def run(args):
 	open_project()
 	size = args.stop - args.start
-	# TODO: raise an error if size is negative
-
-	print("local only: " + str(args.local_only))
-	print("remote only: " + str(args.remote_only))
-
+	if size < 1:
+		sys.exit("stop - start must be at least 1")
 	
 	results = multiprocessing.Queue()
 	blocks, total_blocks = _create_blocks(args)
@@ -132,40 +117,48 @@ def run(args):
 	end_event = threading.Event()
 	end_event.clear()
 	consumers = []
-	if not args.local_only:
-		for server in data["remotes"]:
-			cons = remoteRunner(server, blocks, results, data["name"], data["file"], data["function"], end_event)
+	try:
+		if not args.local_only:
+			for server in data["remotes"]:
+				cons = remoteRunner(server, blocks, results, data["name"], data["file"], data["function"], end_event)
+				cons.start()
+				consumers.append(cons)
+		
+		if not args.remote_only:
+			cons = localRunner(blocks, results, data["file"], data["function"], end_event)
 			cons.start()
 			consumers.append(cons)
-	
-	if not args.remote_only:
-		cons = localRunner(blocks, results, data["file"], data["function"], end_event)
-		cons.start()
-		consumers.append(cons)
 
-	full_results = {}
-	complete_blocks = 0
+		full_results = {}
+		complete_blocks = 0
+		try:
+			while complete_blocks < total_blocks:
+				print("\r" + str(complete_blocks) + " complete of " + str(total_blocks), end="")
+				sys.stdout.flush()
+				while not results.empty():
+					block_id, result = results.get(False)
+					complete_blocks += 1
+					for i in result:
+						full_results[i[0]] = i[1]
 
-	try:
-		while complete_blocks <= total_blocks:
-			print(str(complete_blocks) + " remaining of " + str(total_blocks + 1))
-			while not results.empty():
-				block_id, result = results.get(False)
-				complete_blocks += 1
-				for i in result:
-					full_results[i[0]] = i[1]
+				time.sleep(0.5)
+		except Queue.Empty:
+			pass
+		print("\r" + str(complete_blocks) + " complete of " + str(total_blocks))
+		sys.stdout.flush()
 
-			time.sleep(1)
-	except Queue.Empty:
-		pass
-	end_event.set()
-	time.sleep(0.01)
-	for c in consumers:
-		c.join()
+		end_event.set()
+		time.sleep(0.01)
+		for c in consumers:
+			c.join()
 
-	json.dump(full_results, open(args.output, "w"))
-
-	# TODO: loading bar / progress counter that doesn't print a new line each time
+		json.dump(full_results, open(args.output, "w"))
+		print("Done")
+	except KeyboardInterrupt:
+		print("\nAborting")
+		end_event.set()
+		for c in consumers:
+			c.join()
 
 def _create_blocks(args):
 	blocks = multiprocessing.JoinableQueue()
@@ -232,12 +225,11 @@ def _ensure_dir(name, remote):
 	proc.wait()
 	err = proc.stderr.readline().strip()
 	if not err.endswith("File exists"):
-		print(err)
+		sys.exit(err)
 
 def open_project():
 	if not os.path.isfile("cerberus.confg"):
-		print("[Error] No project found")	# TODO exit with an accurate code
-		sys.exit()
+		sys.exit("No project found")	# TODO exit with an accurate code
 	tmp_data = json.load(open("cerberus.confg", "rU"))
 	for k in tmp_data.keys():
 		data[k] = tmp_data[k]
@@ -246,13 +238,15 @@ def close_project():
 	json.dump(data, open("cerberus.confg", "w"))
 
 def new_args(subparser):
-	new_parser = subparser.add_parser("new", help="Creates a new cerberus project in the current directory")
-	new_parser.add_argument("name", help="The name for the new cerberus project")
-	new_parser.add_argument("target", help="The function that is to be run to the network.  eg. myfile.main ")
-	new_parser.add_argument("--use-local-controller", dest="local", action="store_true", help="Use a controller.py found in the directory of this project.  Otherwise it uses the one at ~/.Cerberus/controller.py")
+	parser = subparser.add_parser("new", help="Creates a new cerberus project in the current directory")
+	parser.set_defaults(func=new_project)
+	parser.add_argument("name", help="The name for the new cerberus project")
+	parser.add_argument("target", help="The function that is to be run to the network.  eg. myfile.main ")
+	parser.add_argument("--use-local-controller", dest="local", action="store_true", help="Use a controller.py found in the directory of this project.  Otherwise it uses the one at ~/.Cerberus/controller.py")
 
 def add_remote_args(subparser):
 	parser = subparser.add_parser("add-server", help="Adds another remote server to the collection for the current project.  Note: this server must be setup to use keys and not a password to connect via ssh.")
+	parser.set_defaults(func=add_remote)
 	parser.add_argument("-a", "--alias", help="The alias (nickname) for the remote server")
 	parser.add_argument("location", help="Address or ip of the remote server")
 	parser.add_argument("user", help="Username to use on the remote server")
@@ -261,26 +255,30 @@ def add_remote_args(subparser):
 
 def add_file_args(subparser):
 	parser = subparser.add_parser("add-file", help="Adds files to the project")
+	parser.set_defaults(func=add_file)
 	parser.add_argument("file", nargs="+", help="file(s) to be added to the project")
 
 def list_args(subparser):
-	parser = subparser.add_parser("list", help="Lists all known remote servers for this project")
+	parser = subparser.add_parser("list", help="Lists all known remote servers and included files for this project")
+	parser.set_defaults(func=list_data)
 
 def remove_remote_args(subparser):
 	parser = subparser.add_parser("remove-server", help="Removes a remote server from the project and deletes this projects files from the server.  If there are duplicate entries with the same name both will be removed.")
+	parser.set_defaults(func=remove_remote)
 	parser.add_argument("name", help="The address or alias of the server to be removed")
 
 def remove_file_args(subparser):
-	parser = subparser.add_parser("remove-file", help="Removes a file from the project.  This will not delete any files from the remote servers.")
+	parser = subparser.add_parser("remove-file", help="Removes a file from the project.  This will not delete any files that are on remote servers.")
+	parser.set_defaults(func=remove_files)
 	parser.add_argument("file", nargs="+", help="The name of the file to be removed")
-
 
 def update_args(subparser):
 	parser = subparser.add_parser("update", help="Deploys code and data files to all remote servers for this project")
+	parser.set_defaults(func=update_remote)
 
 def run_args(subparser):
 	parser = subparser.add_parser("run", help="Runs the project")
-
+	parser.set_defaults(func=run)
 	parser.add_argument("-s", "--start", action="store", default=0, type=int, help="Specifies the value to start incrementing from.  Defaults to 0 (inclusive)")
 
 	parser.add_argument("stop", type=int, help="Specifies the value to increment to (exclusive)")
@@ -318,7 +316,6 @@ class remoteRunner(multiprocessing.Process):
 				try:
 					while not self.end.is_set():
 						block_id, bounds = self.q.get(False)
-						print("working on " + str(block_id) + " " + str(bounds))
 						data = {"start": bounds[0], "stop": bounds[1]}
 
 						print(json.dumps(data), file=rem_in)			# send data as json
@@ -356,7 +353,6 @@ class localRunner(multiprocessing.Process):
 				
 				inlist = list(range(bounds[0], bounds[1]))
 				result = pool.map(self.function, inlist)
-				print(result)
 				out = zip(inlist, result)
 				self.res.put((block_id, out))
 				self.q.task_done()
