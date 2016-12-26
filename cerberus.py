@@ -12,12 +12,9 @@ import sys
 import threading
 import time
 
-import paramiko
-
 
 def main():
     """Run the cerberus command from the provided command line args."""
-    paramiko.util.log_to_file("paramiko.log")
     parser = argparse.ArgumentParser(prog="cerberus")
 
     subparser = parser.add_subparsers(
@@ -182,14 +179,16 @@ def run(args):
             while complete_blocks < total_blocks:
                 print(
                     "\r" + str(complete_blocks), "complete of",
-                    str(total_blocks), sep=" ", end="")
+                    str(total_blocks),
+                    "(" + str(len(multiprocessing.active_children)),
+                    "consumers running)",
+                    sep=" ", end="")
                 sys.stdout.flush()
                 while not results.empty():
-                    block_id, result = results.get(False)
+                    _, result = results.get(False)      # block_id
                     complete_blocks += 1
                     for i in result:
                         full_results[i[0]] = i[1]
-
                 time.sleep(0.5)
         except Queue.Empty:
             pass
@@ -432,47 +431,48 @@ def run_args(subparser):
 
 def remote_runner(server, blocks, results_queue, data, end_event):
     """Connect to a remote server and run the project on it."""
-    cmd = " ".join(
-        ["python", ".cerberus/" + data["name"] + "/controller.py",
-         str(server["cores"]), data["file"], data["function"]])
+    remote_cmds = [
+        "python", ".cerberus/" + data["name"] + "/controller.py",
+        str(server["cores"]), data["file"], data["function"]]
 
-    with paramiko.SSHClient() as client:
+    ssh_cmds = [
+        "ssh", server["user"] + "@" + server["location"]]
+
+    try:
+        print(ssh_cmds + remote_cmds)
+        proc = subprocess.Popen(
+            ssh_cmds + remote_cmds, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("connected to " + server["name"])
+
         try:
-            client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.client.AutoAddPolicy())
+            while not end_event.is_set():
+                block_id, bounds = blocks.get(False)   # block_id
+                data = {"start": bounds[0], "stop": bounds[1]}
 
-            client.connect(
-                str(server["location"]),
-                username=str(server["user"]))
-            print("connected to " + server["name"])
-            rem_in, rem_out, rem_err = client.exec_command(cmd)
+                # send data as json
+                print(json.dumps(data), file=proc.stdin)
 
-            try:
-                while not end_event.is_set():
-                    block_id, bounds = blocks.get(False)
-                    data = {"start": bounds[0], "stop": bounds[1]}
+                out_string = ""
+                while not out_string.endswith("$"):
+                    partial = proc.stdout.readline()
+                    out_string += partial.strip()
+                    time.sleep(0.5)
 
-                    # send data as json
-                    print(json.dumps(data), file=rem_in)
+                # receive result as json
+                result = json.loads(out_string.strip("$"))
 
-                    out_string = ""
-                    while not out_string.endswith("$"):
-                        partial = rem_out.readline()
-                        out_string += partial.strip()
-                        time.sleep(0.5)
+                # add result to result queue
+                results_queue.put((block_id, result["solution"]))
 
-                    # receive result as json
-                    result = json.loads(out_string.strip("$"))
-
-                    # add result to result queue
-                    results_queue.put((block_id, result["solution"]))
-
-                    # call task_done when we are finished
-                    blocks.task_done()
-            except Queue.Empty:
-                pass
-        finally:
-            print("end", file=rem_in)
+                # call task_done when we are finished
+                blocks.task_done()
+        except Queue.Empty:
+            pass
+    finally:
+        # print("end", file=rem_in)
+        # proc.communicate(input="end")
+        print("end", file=proc.stdin)
 
 
 def local_runner(blocks, results_queue, data, end_event):
