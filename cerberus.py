@@ -6,7 +6,7 @@ import json
 import math
 import multiprocessing
 import os
-import Queue
+import queue
 import subprocess
 import sys
 import threading
@@ -15,26 +15,16 @@ import time
 
 def main():
     """Run the cerberus command from the provided command line args."""
-    parser = argparse.ArgumentParser(prog="cerberus")
-
-    subparser = parser.add_subparsers(
-        dest="mode",
-        title="modes",
-        description="""Cerberus has a number of different subcommands that each
-            do different things. For detailed help type `cerberus command
-            -h`""")
-
-    new_args(subparser)
-    add_remote_args(subparser)
-    add_file_args(subparser)
-    list_args(subparser)
-    remove_remote_args(subparser)
-    remove_file_args(subparser)
-    update_args(subparser)
-    run_args(subparser)
+    parser = create_parser()
 
     args = parser.parse_args()
-    args.func(args)
+
+    if args.mode == "new":
+        updated_data = args.func(args)
+    else:
+        data = open_project()
+        updated_data = args.func(args, data)
+    close_project(updated_data)
 
 
 def new_project(args):
@@ -52,12 +42,11 @@ def new_project(args):
     data["files"] = []
     data["remotes"] = []
     data["local"] = args.local
-    close_project(data)
+    return data
 
 
-def add_remote(args):
+def add_remote(args, data):
     """Add a remote server to the current project."""
-    data = open_project()
     remote = {
         "location": args.location,
         "cores": args.cores,
@@ -79,20 +68,18 @@ def add_remote(args):
     data["remotes"].sort(key=lambda x: x["name"])
     if args.upload:
         _upload_to(remote, data)
-    close_project(data)
+    return data
 
 
-def add_file(args):
+def add_file(args, data):
     """Add one or more files to the current project."""
-    data = open_project()
     for name in args.file:
         data["files"].append(name)
-    close_project(data)
+    return data
 
 
-def list_data(args):
+def list_data(args, data):
     """List all servers and files associated with this project."""
-    data = open_project()
     if len(data["remotes"]) > 0:
         print("Servers:")
         for server in data["remotes"]:
@@ -107,47 +94,48 @@ def list_data(args):
 
     print("Included files and directories:")
     print(data["file"] + ".py")
-    print("\n".join(data["files"]))
+    if len(data["files"]) > 0:
+        print("\n".join(data["files"]))
+    return data
 
 
-def remove_remote(args):
+def remove_remote(args, data):
     """Remove a server from the project.
 
     If there are files on the server from this project they will be
     removed as well.
     """
-    data = open_project()
     for i in range(len(data["remotes"]) - 1, -1, -1):
         remote = data["remotes"][i]
         if remote["name"] == args.name:
             _remove_server(remote, data)
             data["remotes"].pop(i)
 
-    close_project(data)
+    return data
 
 
-def remove_files(args):
+def remove_files(args, data):
     """Remove files from the project."""
-    data = open_project()
     for fname in args.file:
         if fname in data["files"]:
             data["files"].remove(fname)
+        elif fname == data["file"] + ".py":
+            print("Main project file cannot be removed")
         else:
             print("File not found in project: " + fname)
-    close_project(data)
+    return data
 
 
-def update_remote(args):
+def update_remote(args, data):
     """Upload project files to each of the servers."""
     # TODO: upload in parallel
-    data = open_project()
     for server in data["remotes"]:
         _upload_to(server, data)
+    return data
 
 
-def run(args):
+def run(args, data):
     """Run the project on local and remote machines."""
-    data = open_project()
     if args.stop - args.start < 1:
         sys.exit("stop - start must be at least 1")
 
@@ -190,7 +178,7 @@ def run(args):
                     for i in result:
                         full_results[i[0]] = i[1]
                 time.sleep(0.5)
-        except Queue.Empty:
+        except queue.Empty:
             pass
         print("\r" + str(complete_blocks), "complete of", str(total_blocks),
               sep=" ")
@@ -208,6 +196,7 @@ def run(args):
         end_event.set()
         for consumer in consumers:
             consumer.join()
+    return data
 
 
 def _create_blocks(args):
@@ -301,6 +290,28 @@ def _ensure_dir(name, remote):
         sys.exit(err)
 
 
+def create_parser():
+    """Create the parser for argparse."""
+    parser = argparse.ArgumentParser(prog="cerberus")
+
+    subparser = parser.add_subparsers(
+        dest="mode",
+        title="modes",
+        description="""Cerberus has a number of different subcommands that each
+            do different things. For detailed help type `cerberus command
+            -h`""")
+
+    new_args(subparser)
+    add_remote_args(subparser)
+    add_file_args(subparser)
+    list_args(subparser)
+    remove_remote_args(subparser)
+    remove_file_args(subparser)
+    update_args(subparser)
+    run_args(subparser)
+    return parser
+
+
 def open_project():
     """Open the project in this directory and returns its information.
 
@@ -308,7 +319,7 @@ def open_project():
     """
     if not os.path.isfile("cerberus.confg"):
         sys.exit("No project found")
-    data = json.load(open("cerberus.confg", "rU"))
+    data = json.load(open("cerberus.confg"))
     return data
 
 
@@ -467,7 +478,7 @@ def remote_runner(server, blocks, results_queue, data, end_event):
 
                 # call task_done when we are finished
                 blocks.task_done()
-        except Queue.Empty:
+        except queue.Empty:
             pass
     finally:
         # print("end", file=rem_in)
@@ -491,7 +502,7 @@ def local_runner(blocks, results_queue, data, end_event):
             results_queue.put((block_id, out))
             blocks.task_done()
 
-    except Queue.Empty:
+    except queue.Empty:
         pass
 
     finally:

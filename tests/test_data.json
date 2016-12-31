@@ -1,0 +1,57 @@
+{
+    "tests": [
+        {
+            "name": "empty project",
+            "data": {
+                "function": "main",
+                "files": [],
+                "name": "empty_test",
+                "remotes": [],
+                "file": "run_me",
+                "local": true
+            },
+            "list_test": [
+                "No servers added",
+                "Included files and directories:",
+                "run_me.py"
+            ],
+            "remove-file_test": {
+                "files": ["run_me.py"],
+                "results": [
+                    "Main project file cannot be removed"
+                ],
+                "final_files": []
+            }
+        },
+        {
+            "name": "skynet",
+            "data": {
+                "function": "solve",
+                "file": "run_me",
+                "files": ["baz.bat", "foo.bar", "troll.jpg"],
+                "remotes": [{
+                    "name": "skynet",
+                    "location": "127.0.0.1",
+                    "user": "hal",
+                    "cores": 0
+                }]
+            },
+            "list_test": [
+                "Servers:",
+                "hal@skynet (127.0.0.1)",
+                "Included files and directories:",
+                "run_me.py",
+                "baz.bat", "foo.bar", "troll.jpg"
+            ],
+            "remove-file_test": {
+                "files": [
+                    "baz.bat", "foo.bar", "meaning_of_life.txt"
+                ],
+                "results": [
+                    "File not found in project: meaning_of_life.txt"
+                ],
+                "final_files": ["troll.jpg"]
+            }
+        }
+    ]
+}
