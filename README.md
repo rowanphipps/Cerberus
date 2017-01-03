@@ -5,18 +5,17 @@ Cerberus is a tool to allow python programs to be run on both the host and remot
 ## Requirements
 Cerberus uses ssh to connect to and communicate with remote machines.  To eliminate the need for the user to type in the password for each machine every time they want to run code or upload files ssh must be configured to authenticate using keys and not passwords.  (look up ssh-keygen and ssh-copy-id for details)
 
-Due to its dependence on ssh and rsync Cerberus most likely is not windows compatible as either the host or a remote machine.  (this is untested though so good luck!)  It is known to be compatible with macOS as both a host and remote and is probably compatible with Linux (it is known to work using raspbian as a remote)
+Due to its dependence on ssh and rsync Cerberus is not windows compatible as either the host or a remote machine.  It is known to be compatible with macOS as both a host and remote and is probably compatible with Linux (it is known to work using raspbian as a remote)
 
-Currently it has the following dependencies:
-
-- [Paramiko](http://www.paramiko.org/)
 
 ## Installation
 `Cerberus.py` should be placed somewhere on your path and can be renamed to `cerberus` without the `.py` on the end.  `controller.py` should be placed in `~/.cerberus/`
 
 ##Usage
 
-To use Cerberus you will first need to write a function like the one described above that takes a single int as input and returns its result as something compatible with json.  It can rely on data and or code in other files but these will need to be added to the Cerberus project explicitly with `cerberus add-file file [file ...]`.  In addition you need to make sure that any libraries the code depends on are preinstalled on all the machines the code is to be run on.  Files can later be remove from the project with `cerberus remove-file file [file ...]`, although this does not delete files that have been deployed to other machines.
+To use Cerberus you will first need to write a function like the one described above that takes a single int as input and returns its result as something compatible with json.  It can rely on data and or code in other files but these will need to be added to the Cerberus project explicitly with `cerberus add-file file [file ...]`.  In addition you need to make sure that any libraries the code depends on are preinstalled on all the machines the code is to be run on.  Files can later be remove from the project with `cerberus remove-file file [file ...]`, although this does not delete files that have been deployed to other machines.  
+
+When connecting to  remote servers, Cerberus creates a .cerberus folder to store project files in.  To remove this folder from a server use the command `cerberus clean <username> <location>`.
 
 ### Setup
 Once you have a function that you want to run using Cerberus, you will need to create a new Cerberus project by running `cerberus new` with the name for the project and the function you want to run as arguments. eg.
