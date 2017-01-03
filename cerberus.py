@@ -18,8 +18,11 @@ def main():
     parser = create_parser()
 
     args = parser.parse_args()
+    if args.mode == "clean":
+        args.func(args)
+        return 0
 
-    if args.mode == "new":
+    if args.mode in ["new"]:
         updated_data = args.func(args)
     else:
         data = open_project()
@@ -76,6 +79,13 @@ def add_file(args, data):
     for name in args.file:
         data["files"].append(name)
     return data
+
+
+def clean_remote(args):
+    """Remove the .cerberus directory from a server."""
+    ssh_args = ["ssh", args.user + "@" + args.location]
+    rm_args = ["rm", "-rf", ".cerberus"]
+    subprocess.call(ssh_args + rm_args)
 
 
 def list_data(args, data):
@@ -305,6 +315,7 @@ def create_parser():
     add_remote_args(subparser)
     add_file_args(subparser)
     list_args(subparser)
+    clean_args(subparser)
     remove_remote_args(subparser)
     remove_file_args(subparser)
     update_args(subparser)
@@ -354,8 +365,8 @@ def add_remote_args(subparser):
     parser.set_defaults(func=add_remote)
     parser.add_argument(
         "-a", "--alias", help="The alias (nickname) for the remote server")
-    parser.add_argument("location", help="Address or ip of the remote server")
     parser.add_argument("user", help="Username to use on the remote server")
+    parser.add_argument("location", help="Address or ip of the remote server")
     parser.add_argument(
         "-c", "--cores", type=int, default=0,
         help="""Specifies how many threads to run.
@@ -380,6 +391,16 @@ def list_args(subparser):
         "list",
         help="""Lists all known remote servers and included files.""")
     parser.set_defaults(func=list_data)
+
+
+def clean_args(subparser):
+    """Add the subparser for the clean command."""
+    parser = subparser.add_parser(
+        "clean",
+        help="""Removes all trace of cerberus from a remote server""")
+    parser.set_defaults(func=clean_remote)
+    parser.add_argument("user", help="Username to use on the remote server")
+    parser.add_argument("location", help="Address or ip of the remote server")
 
 
 def remove_remote_args(subparser):
